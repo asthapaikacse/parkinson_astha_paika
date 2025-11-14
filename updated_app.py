@@ -2,126 +2,143 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-import os
 
-# --------------------------------------------------------------------------------
-# PAGE SETTINGS
-# --------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Parkinson's Disease Prediction",
-    page_icon="🧠",
-    layout="wide"
+    page_title="Parkinson's Disease Predictor",
+    layout="wide",
+    page_icon="🧠"
 )
 
-st.title("🧠 Parkinson's Disease Prediction App")
-st.write("This app predicts **Parkinson's Disease** and **UPDRS Severity** using machine learning models.")
+st.title("🧠 Parkinson's Disease Prediction System")
+st.write("Upload patient details to check Parkinson's disease probability and severity.")
 
-# --------------------------------------------------------------------------------
-# LOAD MODELS SAFELY
-# --------------------------------------------------------------------------------
+# -----------------------------
+# Load Models Safely
+# -----------------------------
+def safe_load(path):
+    try:
+        return joblib.load(path)
+    except:
+        return None
 
-MODEL_PATH = "models"
+models = {
+    "diagnosis": safe_load("models/voting_ensemble_model.pkl"),
+    "severity": safe_load("models/severity_classifier.pkl"),
+    "scaler": safe_load("models/scaler.pkl"),
+    "features": safe_load("models/selected_features.pkl"),
+}
 
-try:
-    diagnosis_model = joblib.load(os.path.join(MODEL_PATH, "best_model.pkl"))
-    selector = joblib.load(os.path.join(MODEL_PATH, "selector.pkl"))
-    updrs_model = joblib.load(os.path.join(MODEL_PATH, "updrs_regressor.pkl"))
-    scaler = joblib.load("scaler.pkl")  # this one is in root
-    model_loaded = True
-except Exception as e:
-    st.error("❌ Failed to load models. Make sure the following files exist:")
-    st.code("""
-models/best_model.pkl
-models/selector.pkl
-models/updrs_regressor.pkl
-scaler.pkl (root folder)
-    """)
-    model_loaded = False
-
-if not model_loaded:
+# Error if anything missing
+if None in models.values():
+    st.error("❌ Failed to load models. Please ensure all model files exist in /models folder.")
     st.stop()
 
-# --------------------------------------------------------------------------------
-# USER INPUT FORM
-# --------------------------------------------------------------------------------
+diagnosis_model = models["diagnosis"]
+severity_model = models["severity"]
+scaler = models["scaler"]
+selected_features = models["features"]
 
-st.subheader("📋 Input Patient Information")
+# -----------------------------
+# UI Input Fields (Clean UI)
+# Ethnicity + EducationLevel removed from UI
+# -----------------------------
+st.subheader("📋 Patient Information")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
-    age = st.number_input("Age", 20, 90, 60)
-    gender = st.selectbox("Gender", ["Male", "Female"])
-    jitter = st.slider("Jitter (%)", 0.0, 1.0, 0.12)
+    Age = st.number_input("Age", min_value=1, max_value=120, value=45)
+    BMI = st.number_input("BMI", min_value=10.0, max_value=50.0, value=22.5)
+    Alcohol = st.slider("Alcohol Consumption (units/week)", 0, 50, 2)
+    PhysicalActivity = st.slider("Physical Activity (hrs/week)", 0, 20, 3)
 
 with col2:
-    shimmer = st.slider("Shimmer (%)", 0.0, 1.0, 0.18)
-    HNR = st.slider("HNR", 0.0, 40.0, 21.5)
-    RPDE = st.slider("RPDE", 0.0, 1.0, 0.45)
+    DietQuality = st.slider("Diet Quality (1-10)", 1, 10, 7)
+    SleepQuality = st.slider("Sleep Quality (1-10)", 1, 10, 6)
+    SBP = st.number_input("Systolic BP", 80, 200, 120)
+    DBP = st.number_input("Diastolic BP", 50, 120, 80)
+
+col3, col4 = st.columns(2)
 
 with col3:
-    DFA = st.slider("DFA", 0.4, 1.0, 0.65)
-    PPE = st.slider("PPE", 0.0, 2.0, 0.23)
-    spread1 = st.slider("Spread1", -7.0, -1.0, -4.5)
+    CholTotal = st.number_input("Total Cholesterol", 100, 400, 180)
+    CholLDL = st.number_input("LDL Cholesterol", 50, 250, 100)
+    CholHDL = st.number_input("HDL Cholesterol", 20, 100, 45)
 
-# Convert gender to numeric
-gender_num = 1 if gender == "Male" else 0
+with col4:
+    Triglycerides = st.number_input("Triglycerides", 50, 600, 150)
+    MoCA = st.slider("MoCA Score (0-30)", 0, 30, 26)
+    FunctionalAssessment = st.slider("Functional Assessment (0-100)", 0, 100, 85)
 
-# Feature vector
-input_data = pd.DataFrame([[
-    age, gender_num, jitter, shimmer, HNR,
-    RPDE, DFA, PPE, spread1
-]], columns=[
-    "age", "gender", "jitter", "shimmer", "HNR",
-    "RPDE", "DFA", "PPE", "spread1"
-])
+# -----------------------------
+# Internally Fill Missing UI Fields
+# to match training feature order
+# -----------------------------
+Ethnicity = 0              # neutral category
+EducationLevel = 12        # approximate school+college (neutral)
 
-# --------------------------------------------------------------------------------
-# PROCESS FEATURES
-# --------------------------------------------------------------------------------
+# -----------------------------
+# Create Input DataFrame
+# -----------------------------
+input_dict = {
+    "Age": Age,
+    "Ethnicity": Ethnicity,
+    "EducationLevel": EducationLevel,
+    "BMI": BMI,
+    "AlcoholConsumption": Alcohol,
+    "PhysicalActivity": PhysicalActivity,
+    "DietQuality": DietQuality,
+    "SleepQuality": SleepQuality,
+    "SystolicBP": SBP,
+    "DiastolicBP": DBP,
+    "CholesterolTotal": CholTotal,
+    "CholesterolLDL": CholLDL,
+    "CholesterolHDL": CholHDL,
+    "CholesterolTriglycerides": Triglycerides,
+    "MoCA": MoCA,
+    "FunctionalAssessment": FunctionalAssessment
+}
 
-scaled_features = scaler.transform(input_data)
-selected_features = selector.transform(scaled_features)
+input_df = pd.DataFrame([input_dict])
 
-# --------------------------------------------------------------------------------
-# PREDICTION BUTTON
-# --------------------------------------------------------------------------------
+# Select required features
+input_df = input_df[selected_features]
 
-if st.button("🔍 Predict Parkinson's & Severity"):
-    diagnosis = diagnosis_model.predict(selected_features)[0]
-    probability = diagnosis_model.predict_proba(selected_features)[0][diagnosis]
+# Scale input
+scaled_input = scaler.transform(input_df)
 
-    updrs = updrs_model.predict(selected_features)[0]
+# -----------------------------
+# Prediction Button
+# -----------------------------
+if st.button("🔍 Run Parkinson's Prediction"):
+    
+    # --- Diagnosis Prediction ---
+    prob = diagnosis_model.predict_proba(scaled_input)[0][1]
+    diagnosis = 1 if prob >= 0.5 else 0
 
-    # Severity mapping
-    if updrs <= 32:
-        severity = "Minimal"
-        color = "green"
-    elif updrs <= 58:
-        severity = "Mild"
-        color = "yellow"
-    elif updrs <= 95:
-        severity = "Moderate"
-        color = "orange"
-    else:
-        severity = "Severe"
-        color = "red"
-
-    # --------------------------------------------------------------------------------
-    # OUTPUT BLOCK
-    # --------------------------------------------------------------------------------
-
-    st.subheader("📊 Prediction Results")
-
-    # Parkinson Detection
+    # --- Severity Prediction (Only if Disease = YES) ---
     if diagnosis == 1:
-        st.error(f"🧬 Parkinson's Detected (Confidence: {probability*100:.2f}%)")
+        severity_class = severity_model.predict(scaled_input)[0]
+        severity_map = {
+            0: "Mild",
+            1: "Moderate",
+            2: "Severe",
+            3: "Extreme"
+        }
+        severity_label = severity_map.get(severity_class, "Unknown")
     else:
-        st.success(f"✔ No Parkinson's Detected (Confidence: {probability*100:.2f}%)")
+        severity_label = "Not Applicable"
 
-    # UPDRS Severity
-    st.markdown(f"""
-    ### 🩺 UPDRS Severity Prediction  
-    - **UPDRS Score:** {updrs:.2f}  
-    - **Severity Level:** <span style='color:{color}; font-weight:700;'>{severity}</span>
-    """, unsafe_allow_html=True)
+    # -----------------------------
+    # Display Results
+    # -----------------------------
+    st.subheader("🩺 Prediction Result")
+
+    if diagnosis == 1:
+        st.error(f"⚠️ PARKINSON'S DISEASE DETECTED")
+        st.write(f"**Confidence:** {prob*100:.2f}%")
+        st.write(f"**Predicted Severity (ML-based):** {severity_label}")
+    else:
+        st.success("✅ No Parkinson's Detected")
+        st.write(f"**Confidence:** {(1 - prob)*100:.2f}%")
+
