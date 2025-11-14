@@ -23,8 +23,8 @@ print("="*80)
 
 try:
     # Load your preprocessed training data
-    X_train = pd.read_csv('X_train_preprocessed.csv')
-    X_test = pd.read_csv('X_test_preprocessed.csv')
+    X_train = pd.read_csv('/content/X_train_preprocessed.csv')
+    X_test = pd.read_csv('/content/X_test_preprocessed.csv')
 
     print(f"✓ X_train shape: {X_train.shape}")
     print(f"✓ X_test shape: {X_test.shape}")
