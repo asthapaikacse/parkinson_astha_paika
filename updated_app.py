@@ -1,12 +1,12 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import joblib
 import os
 
-# ------------------------------
-# PAGE CONFIG
-# ------------------------------
+# --------------------------------------------------------------------------------
+# PAGE SETTINGS
+# --------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Parkinson's Disease Prediction",
     page_icon="🧠",
@@ -14,96 +14,114 @@ st.set_page_config(
 )
 
 st.title("🧠 Parkinson's Disease Prediction App")
-st.write("Upload patient features to predict: **Parkinson’s YES/NO**, **Confidence**, **UPDRS**, and **Severity Level**.")
+st.write("This app predicts **Parkinson's Disease** and **UPDRS Severity** using machine learning models.")
 
-# ------------------------------
-# LOAD MODELS
-# ------------------------------
-@st.cache_resource
-def load_all_models():
-    scaler = joblib.load("scaler.pkl")
-    selector = joblib.load("selector.pkl")
-    best_model = joblib.load("best_model.pkl")
-    updrs_model = joblib.load("UPDRS_regressor.pkl")
-    return scaler, selector, best_model, updrs_model
+# --------------------------------------------------------------------------------
+# LOAD MODELS SAFELY
+# --------------------------------------------------------------------------------
+
+MODEL_PATH = "models"
 
 try:
-    scaler, selector, best_model, updrs_model = load_all_models()
+    diagnosis_model = joblib.load(os.path.join(MODEL_PATH, "best_model.pkl"))
+    selector = joblib.load(os.path.join(MODEL_PATH, "selector.pkl"))
+    updrs_model = joblib.load(os.path.join(MODEL_PATH, "updrs_regressor.pkl"))
+    scaler = joblib.load("scaler.pkl")  # this one is in root
+    model_loaded = True
 except Exception as e:
-    st.error("❌ Failed to load models. Make sure all model files are uploaded.")
+    st.error("❌ Failed to load models. Make sure the following files exist:")
+    st.code("""
+models/best_model.pkl
+models/selector.pkl
+models/updrs_regressor.pkl
+scaler.pkl (root folder)
+    """)
+    model_loaded = False
+
+if not model_loaded:
     st.stop()
 
-# ------------------------------
-# SEVERITY LOGIC (ML-based)
-# ------------------------------
-def updrs_to_severity(updrs):
-    if updrs <= 32:
-        return "Minimal (0–32)"
-    elif updrs <= 58:
-        return "Mild (33–58)"
-    elif updrs <= 95:
-        return "Moderate (59–95)"
-    else:
-        return "Severe (96–199)"
-
-# ------------------------------
+# --------------------------------------------------------------------------------
 # USER INPUT FORM
-# ------------------------------
-st.subheader("📥 Enter Patient Feature Values")
+# --------------------------------------------------------------------------------
 
-with st.form("prediction_form"):
-    values = st.text_area(
-        "Enter comma-separated 750 feature values (same order as training dataset):",
-        placeholder="0.128, 0.334, 2.556, ..."
-    )
-    submitted = st.form_submit_button("Predict")
+st.subheader("📋 Input Patient Information")
 
-if submitted:
-    try:
-        # Convert to numpy array
-        raw_vals = np.array([float(x.strip()) for x in values.split(",")])
+col1, col2, col3 = st.columns(3)
 
-        if raw_vals.shape[0] != 750:
-            st.error(f"❌ Expected **750 features**, but got {raw_vals.shape[0]}.")
-            st.stop()
+with col1:
+    age = st.number_input("Age", 20, 90, 60)
+    gender = st.selectbox("Gender", ["Male", "Female"])
+    jitter = st.slider("Jitter (%)", 0.0, 1.0, 0.12)
 
-        user_input = raw_vals.reshape(1, -1)
+with col2:
+    shimmer = st.slider("Shimmer (%)", 0.0, 1.0, 0.18)
+    HNR = st.slider("HNR", 0.0, 40.0, 21.5)
+    RPDE = st.slider("RPDE", 0.0, 1.0, 0.45)
 
-        # ------------------------------
-        # APPLY SCALER + FEATURE SELECTOR
-        # ------------------------------
-        scaled = scaler.transform(user_input)
-        selected = selector.transform(scaled)
+with col3:
+    DFA = st.slider("DFA", 0.4, 1.0, 0.65)
+    PPE = st.slider("PPE", 0.0, 2.0, 0.23)
+    spread1 = st.slider("Spread1", -7.0, -1.0, -4.5)
 
-        # ------------------------------
-        # PARKINSON YES/NO PREDICTION
-        # ------------------------------
-        pred = best_model.predict(selected)[0]
-        prob = best_model.predict_proba(selected)[0]
+# Convert gender to numeric
+gender_num = 1 if gender == "Male" else 0
 
-        confidence = round(max(prob) * 100, 2)
+# Feature vector
+input_data = pd.DataFrame([[
+    age, gender_num, jitter, shimmer, HNR,
+    RPDE, DFA, PPE, spread1
+]], columns=[
+    "age", "gender", "jitter", "shimmer", "HNR",
+    "RPDE", "DFA", "PPE", "spread1"
+])
 
-        # ------------------------------
-        # UPDRS REGRESSION (ML)
-        # ------------------------------
-        updrs_score = float(updrs_model.predict(selected)[0])
-        updrs_score = round(updrs_score, 2)
+# --------------------------------------------------------------------------------
+# PROCESS FEATURES
+# --------------------------------------------------------------------------------
 
-        severity = updrs_to_severity(updrs_score)
+scaled_features = scaler.transform(input_data)
+selected_features = selector.transform(scaled_features)
 
-        # ------------------------------
-        # SHOW RESULTS
-        # ------------------------------
-        st.subheader("🔍 Prediction Results")
+# --------------------------------------------------------------------------------
+# PREDICTION BUTTON
+# --------------------------------------------------------------------------------
 
-        if pred == 1:
-            st.error(f"🧠 Parkinson’s Detected")
-        else:
-            st.success("🟢 No Parkinson’s Detected")
+if st.button("🔍 Predict Parkinson's & Severity"):
+    diagnosis = diagnosis_model.predict(selected_features)[0]
+    probability = diagnosis_model.predict_proba(selected_features)[0][diagnosis]
 
-        st.write(f"### 🔹 Confidence: **{confidence}%**")
-        st.write(f"### 🔹 UPDRS Score (ML Predicted): **{updrs_score}**")
-        st.write(f"### 🔹 Severity Level: **{severity}**")
+    updrs = updrs_model.predict(selected_features)[0]
 
-    except Exception as e:
-        st.error(f"❌ Error processing input: {str(e)}")
+    # Severity mapping
+    if updrs <= 32:
+        severity = "Minimal"
+        color = "green"
+    elif updrs <= 58:
+        severity = "Mild"
+        color = "yellow"
+    elif updrs <= 95:
+        severity = "Moderate"
+        color = "orange"
+    else:
+        severity = "Severe"
+        color = "red"
+
+    # --------------------------------------------------------------------------------
+    # OUTPUT BLOCK
+    # --------------------------------------------------------------------------------
+
+    st.subheader("📊 Prediction Results")
+
+    # Parkinson Detection
+    if diagnosis == 1:
+        st.error(f"🧬 Parkinson's Detected (Confidence: {probability*100:.2f}%)")
+    else:
+        st.success(f"✔ No Parkinson's Detected (Confidence: {probability*100:.2f}%)")
+
+    # UPDRS Severity
+    st.markdown(f"""
+    ### 🩺 UPDRS Severity Prediction  
+    - **UPDRS Score:** {updrs:.2f}  
+    - **Severity Level:** <span style='color:{color}; font-weight:700;'>{severity}</span>
+    """, unsafe_allow_html=True)
